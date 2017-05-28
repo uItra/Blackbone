@@ -138,10 +138,10 @@ typedef NTSTATUS( NTAPI* fnNtLockVirtualMemory )(
 
 // RtlRbInsertNodeEx
 typedef int (NTAPI* fnRtlRbInsertNodeEx)(
-    PRTL_RB_TREE 	    Tree,
-    PRTL_BALANCED_NODE 	Parent,
-    BOOLEAN             Right,
-    PRTL_BALANCED_NODE 	Node
+    _RTL_RB_TREE<DWORD_PTR>*        Tree,
+    _RTL_BALANCED_NODE<DWORD_PTR>*  Parent,
+    BOOLEAN                         Right,
+    _RTL_BALANCED_NODE<DWORD_PTR> * Node
     );
 
 // NtSetInformationProcess
@@ -165,8 +165,8 @@ typedef NTSTATUS( NTAPI* fnNtDuplicateObject )(
 
 // RtlRbRemoveNode
 typedef int (NTAPI* fnRtlRbRemoveNode)(
-    PRTL_RB_TREE        Tree,
-    PRTL_BALANCED_NODE 	Node
+    _RTL_RB_TREE<DWORD_PTR>*        Tree,
+    _RTL_BALANCED_NODE<DWORD_PTR>*  Node
     );
 
 // RtlUpcaseUnicodeChar
@@ -218,6 +218,7 @@ typedef NTSTATUS( NTAPI *fnRtlCreateActivationContext )(
     OUT PVOID*  ActCtx
     );
 
+// NtQueueApcThread
 typedef NTSTATUS( NTAPI* fnNtQueueApcThread )(
     IN HANDLE ThreadHandle,
     IN PVOID ApcRoutine, /*PKNORMAL_ROUTINE*/
@@ -225,6 +226,9 @@ typedef NTSTATUS( NTAPI* fnNtQueueApcThread )(
     IN PVOID SystemArgument1,
     IN PVOID SystemArgument2
     );
+
+// RtlQueueApcWow64Thread
+typedef fnNtQueueApcThread fnRtlQueueApcWow64Thread;
 
 // RtlImageNtHeader
 typedef PIMAGE_NT_HEADERS( NTAPI* fnRtlImageNtHeader )(

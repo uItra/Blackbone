@@ -1,7 +1,10 @@
 #include "InitOnce.h"
 #include "../Include/Winheaders.h"
+#include "../../../contrib/VersionHelpers.h"
 #include "../Include/Macro.h"
 #include "DynImport.h"
+#include "PatternLoader.h"
+#include "NameResolve.h"
 
 #include <string>
 #include <cassert>
@@ -16,9 +19,17 @@ public:
     {
         if(!_done)
         {
+            InitVersion();
+
             GrantPriviledge( L"SeDebugPrivilege" );
             GrantPriviledge( L"SeLoadDriverPrivilege" );
             LoadFuncs();
+
+            g_PatternLoader.reset( new PatternLoader );
+            g_PatternLoader->DoSearch();
+
+            NameResolve::Instance().Initialize();
+
             _done = true;
         }
 
@@ -101,6 +112,7 @@ private:
         LOAD_IMPORT( "NtCreateEvent",                            hNtdll );
         LOAD_IMPORT( "NtQueueApcThread",                         hNtdll );
         LOAD_IMPORT( "RtlEncodeSystemPointer",                   hNtdll );
+        LOAD_IMPORT( "RtlQueueApcWow64Thread",                   hNtdll ); 
         LOAD_IMPORT( "NtWow64QueryInformationProcess64",         hNtdll );
         LOAD_IMPORT( "NtWow64ReadVirtualMemory64",               hNtdll );
         LOAD_IMPORT( "NtWow64WriteVirtualMemory64",              hNtdll );
@@ -115,7 +127,8 @@ private:
     static bool _done;
 };
 
+std::unique_ptr<PatternLoader> g_PatternLoader;
+
 bool InitOnce::_done = false;
 const bool g_Initialized = InitOnce::Exec();
-
 }

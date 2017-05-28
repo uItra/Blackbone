@@ -180,12 +180,9 @@ NTSTATUS NativeWow64::CreateRemoteThreadT( HANDLE& hThread, ptr_t entry, ptr_t a
     }
     else*/
     {
-        LastNtStatus( STATUS_SUCCESS );
-
         static DWORD64 NtCreateThreadEx = GetProcAddress64( getNTDLL64(), "NtCreateThreadEx" );
-
         if (NtCreateThreadEx == 0)
-            return LastNtStatus( STATUS_ORDINAL_NOT_FOUND );
+            return STATUS_ORDINAL_NOT_FOUND;
 
         // hThread can't be used directly because x64Call will zero stack space near variable
         DWORD64 hThd2 = NULL;
@@ -217,7 +214,7 @@ NTSTATUS NativeWow64::GetThreadContextT( HANDLE hThread, _CONTEXT32& ctx )
     }
     else
     {
-        LastNtStatus( STATUS_SUCCESS );
+        SetLastNtStatus( STATUS_SUCCESS );
         GetThreadContext( hThread, reinterpret_cast<PCONTEXT>(&ctx) );
         return LastNtStatus();
     }
@@ -254,7 +251,7 @@ NTSTATUS NativeWow64::SetThreadContextT( HANDLE hThread, _CONTEXT32& ctx )
     }
     else
     {
-        LastNtStatus( STATUS_SUCCESS );
+        SetLastNtStatus( STATUS_SUCCESS );
         SetThreadContext( hThread, reinterpret_cast<const CONTEXT*>(&ctx) );
         return LastNtStatus();
     }
@@ -273,6 +270,25 @@ NTSTATUS NativeWow64::SetThreadContextT( HANDLE hThread, _CONTEXT64& ctx )
         return STATUS_ORDINAL_NOT_FOUND;
 
     return static_cast<NTSTATUS>(X64Call( stc, 2, (DWORD64)hThread, (DWORD64)&ctx ));
+}
+
+/// <summary>
+/// NtQueueApcThread
+/// </summary>
+/// <param name="hThread">Thread handle.</param>
+/// <param name="func">APC function</param>
+/// <param name="arg">APC argument</param>
+/// <returns>Status code</returns>
+NTSTATUS NativeWow64::QueueApcT( HANDLE hThread, ptr_t func, ptr_t arg )
+{
+    if (_wowBarrier.targetWow64)
+        return Native::QueueApcT( hThread, func, arg );
+
+    static ptr_t qat = GetProcAddress64( getNTDLL64(), "NtQueueApcThread" );
+    if (qat == 0)
+        return STATUS_ORDINAL_NOT_FOUND;
+
+    return static_cast<NTSTATUS>(X64Call( qat, 5, (DWORD64)hThread, func, arg, 0ull, 0ull ));
 }
 
 /// <summary>
@@ -354,7 +370,7 @@ ptr_t NativeWow64::getTEB( HANDLE hThread, _TEB64* pteb )
 
     if (ntQit == 0)
     {
-        LastNtStatus( STATUS_ORDINAL_NOT_FOUND );
+        SetLastNtStatus( STATUS_ORDINAL_NOT_FOUND );
         return 0;
     }
 

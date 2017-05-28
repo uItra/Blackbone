@@ -23,8 +23,6 @@ Process::Process()
     // Ensure InitOnce is called
     auto i = g_Initialized;
     UNREFERENCED_PARAMETER( i );
-
-    NameResolve::Instance().Initialize();
 }
 
 Process::~Process(void)
@@ -42,11 +40,8 @@ NTSTATUS Process::Attach( DWORD pid, DWORD access /*= DEFAULT_ACCESS_P*/ )
     Detach();
 
     auto status = _core.Open( pid, access );
-    if (NT_SUCCESS( status ))
-    {
-        _nativeLdr.Init();
+    if (NT_SUCCESS( status ) && (access & PROCESS_VM_WRITE))
         status = _remote.CreateRPCEnvironment( false, false );
-    }
 
     return status;
 }
@@ -63,7 +58,9 @@ NTSTATUS Process::Attach( HANDLE hProc )
     auto status = _core.Open( hProc );
     if (NT_SUCCESS( status ))
     {
-        _nativeLdr.Init();
+        if (!valid())
+            return STATUS_INVALID_HANDLE;
+
         _remote.CreateRPCEnvironment( false, false );
     }
 
@@ -78,8 +75,7 @@ NTSTATUS Process::Attach( HANDLE hProc )
 /// <returns>Status code</returns>
 NTSTATUS Process::Attach( const wchar_t* name, DWORD access /*= DEFAULT_ACCESS_P*/ )
 {
-    std::vector<DWORD> pids;
-    EnumByName( name, pids );
+    auto pids = EnumByName( name );
     return pids.empty() ? STATUS_NOT_FOUND : Attach( pids.front(), access );
 }
 
@@ -131,8 +127,6 @@ NTSTATUS Process::CreateAndAttach(
         }
         else
             ResumeThread( pi.hThread );
-
-        _nativeLdr.Init();
     }
 
     // Close unneeded handles
@@ -165,9 +159,9 @@ NTSTATUS Process::Detach()
 /// <returns>Status code</returns>
 NTSTATUS Process::EnsureInit()
 {
-    auto pProc = _modules.GetExport( _modules.GetModule( L"ntdll.dll", blackbone::Sections ), "NtYieldExecution" ).procAddress;
+    auto pProc = _modules.GetNtdllExport( "NtYieldExecution", mt_default, Sections );
     if (pProc)
-        return _remote.ExecDirect( pProc, 0 );
+        return _remote.ExecDirect( pProc->procAddress, 0 );
 
     return STATUS_NOT_FOUND;
 }
@@ -218,13 +212,13 @@ NTSTATUS Process::Terminate( uint32_t code /*= 0*/ )
 /// <summary>
 /// Enumerate all open handles
 /// </summary>
-/// <param name="handles">Found handles</param>
-/// <returns>Status code</returns>
-NTSTATUS Process::EnumHandles( std::vector<HandleInfo>& handles )
+/// <returns>Found handles or status code</returns>
+call_result_t<std::vector<HandleInfo>> Process::EnumHandles()
 {
     ULONG bufSize = 0x10000;
     uint8_t* buffer = (uint8_t*)VirtualAlloc( NULL, bufSize, MEM_COMMIT, PAGE_READWRITE );
     ULONG returnLength = 0;
+    std::vector<HandleInfo> handles;
 
     // Query handle list
     NTSTATUS status = SAFE_NATIVE_CALL( NtQuerySystemInformation, SystemHandleInformation, buffer, bufSize, &returnLength );
@@ -338,7 +332,7 @@ NTSTATUS Process::EnumHandles( std::vector<HandleInfo>& handles )
     }
 
     VirtualFree( buffer, 0, MEM_RELEASE );
-    return status;
+    return call_result_t<std::vector<HandleInfo>>( handles, status );
 }
 
 /// <summary>
@@ -346,8 +340,9 @@ NTSTATUS Process::EnumHandles( std::vector<HandleInfo>& handles )
 /// </summary>
 /// <param name="name">Process name. If empty - function will retrieve all existing processes</param>
 /// <param name="found">Found processses</param>
-void Process::EnumByName( const std::wstring& name, std::vector<DWORD>& found )
+std::vector<DWORD> Process::EnumByName( const std::wstring& name )
 {
+    std::vector<DWORD> found;
     HANDLE hProcSnap = CreateToolhelp32Snapshot( TH32CS_SNAPPROCESS, 0 );
 
     if (hProcSnap != INVALID_HANDLE_VALUE)
@@ -366,6 +361,8 @@ void Process::EnumByName( const std::wstring& name, std::vector<DWORD>& found )
 
         CloseHandle( hProcSnap );
     }
+
+    return found;
 }
 
 /// <summary>
@@ -376,10 +373,9 @@ void Process::EnumByName( const std::wstring& name, std::vector<DWORD>& found )
 /// <param name="found">Found processses</param>
 /// <param name="includeThreads">If set to true, function will retrieve info ablout process threads</param>
 /// <returns>Status code</returns>
-NTSTATUS Process::EnumByNameOrPID(
+call_result_t<std::vector<ProcessInfo>> Process::EnumByNameOrPID(
     uint32_t pid,
     const std::wstring& name,
-    std::vector<ProcessInfo>& found,
     bool includeThreads /*= false*/
     )
 {
@@ -387,8 +383,7 @@ NTSTATUS Process::EnumByNameOrPID(
     uint8_t tmpbuf[0x100];
     uint8_t* buffer = tmpbuf;
     ULONG returnLength = 0;
-
-    found.clear();
+    std::vector<ProcessInfo> found;
 
     // Query process info
     NTSTATUS status = SAFE_NATIVE_CALL( NtQuerySystemInformation, (SYSTEM_INFORMATION_CLASS)57, buffer, bufSize, &returnLength );
@@ -456,7 +451,7 @@ NTSTATUS Process::EnumByNameOrPID(
     std::sort( found.begin(), found.end() );
 
     VirtualFree( buffer, 0, MEM_RELEASE );
-    return status;
+    return call_result_t<std::vector<ProcessInfo>>( found, status );
 }
 
 

@@ -84,7 +84,7 @@ void RemoteHook::EndDebug()
 /// <param name="pClass">Class reference.</param>
 /// <param name="pThread">Thread to hook. Valid only for HWBP</param>
 /// <returns>Status code</returns>
-NTSTATUS RemoteHook::ApplyP( eHookType type, uint64_t ptr, fnCallback newFn, const void* pClass /*= nullptr*/, Thread* pThread /*= nullptr*/ )
+NTSTATUS RemoteHook::ApplyP( eHookType type, uint64_t ptr, fnCallback newFn, const void* pClass /*= nullptr*/, ThreadPtr pThread /*= nullptr*/ )
 {
     NTSTATUS status = EnsureDebug();
     if (!NT_SUCCESS( status ))
@@ -102,7 +102,7 @@ NTSTATUS RemoteHook::ApplyP( eHookType type, uint64_t ptr, fnCallback newFn, con
     HookData data = { { 0 } };
 
     // Store old byte
-    data.oldByte = _memory.Read<uint8_t>( ptr );
+    data.oldByte = _memory.Read<uint8_t>( ptr ).result();
     data.type = type;
     data.onExecute.freeFn = newFn;
     data.onExecute.classFn.classPtr = pClass;
@@ -115,16 +115,15 @@ NTSTATUS RemoteHook::ApplyP( eHookType type, uint64_t ptr, fnCallback newFn, con
         // Set for single thread
         if (pThread != nullptr)
         {
-            data.hwbp_idx = pThread->AddHWBP( ptr, hwbp_execute, hwbp_1 );
+            data.hwbp_idx = pThread->AddHWBP( ptr, hwbp_execute, hwbp_1 ).result( -1 );
             if (data.hwbp_idx == -1)
                 return STATUS_NO_MORE_ENTRIES;
         }
         // Set for all threads
         else
         {
-            auto& threads = _memory.process()->threads().getAll();     
-            for (auto& thread : threads)
-                thread.AddHWBP( ptr, hwbp_execute, hwbp_1 );
+            for (auto& thread : _memory.process()->threads().getAll())
+                thread->AddHWBP( ptr, hwbp_execute, hwbp_1 );
         }
     }
     // Write int3
@@ -206,7 +205,7 @@ void RemoteHook::Restore( const HookData &hook, uint64_t ptr )
         {
             auto& threads = _memory.process()->threads().getAll();
             for (auto& thread : threads)
-                thread.RemoveHWBP( ptr );
+                thread->RemoveHWBP( ptr );
         }
     }
     // Restore original byte
@@ -253,9 +252,9 @@ DWORD RemoteHook::EventThread()
     // 
     // Reset debug flag in PEB
     //
-    _memory.Write( _core.peb64() + FIELD_OFFSET( _PEB64, BeingDebugged ), uint8_t( 0 ) );
+    _memory.Write( fieldPtr( _core.peb64(), &_PEB64::BeingDebugged ), uint8_t( 0 ) );
     if (!_x64Target)
-        _memory.Write( _core.peb32() + FIELD_OFFSET( _PEB32, BeingDebugged ), uint8_t( 0 ) );
+        _memory.Write( fieldPtr( _core.peb32(), &_PEB32::BeingDebugged ), uint8_t( 0 ) );
 
     _active = true;
 
