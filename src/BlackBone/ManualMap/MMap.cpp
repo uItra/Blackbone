@@ -93,7 +93,8 @@ call_result_t<ModuleDataPtr> MMap::MapImageInternal(
         return hMod;
 
     // Prepare target process
-    auto status = _process.remote().CreateRPCEnvironment();
+    auto mode = (flags & NoThreads) ? Worker_UseExisting : Worker_CreateNew;
+    auto status = _process.remote().CreateRPCEnvironment( mode, true );
     if (!NT_SUCCESS( status ))
     {
         Cleanup();
@@ -664,14 +665,22 @@ NTSTATUS MMap::RelocateImage( ImageContextPtr pImage )
         return STATUS_SUCCESS;
     }
 
+    // Dll can't be relocated
+    if (!(pImage->peImage.DllCharacteristics() & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE))
+    {
+        BLACKBONE_TRACE( L"ManualMap: Can't relocate image, no relocation flag" );
+        return STATUS_INVALID_IMAGE_HASH;
+    }
+
     auto start = pImage->peImage.DirectoryAddress( IMAGE_DIRECTORY_ENTRY_BASERELOC );
     auto end = start + pImage->peImage.DirectorySize( IMAGE_DIRECTORY_ENTRY_BASERELOC );
-
     auto fixrec = reinterpret_cast<pe::RelocData*>(start);
+
+    // No relocatable data
     if (fixrec == nullptr)
     {
-        BLACKBONE_TRACE( L"ManualMap: Can't relocate image, no relocation data" );
-        return STATUS_INVALID_IMAGE_FORMAT;
+        BLACKBONE_TRACE( L"ManualMap: Image does not use relocations" );
+        return STATUS_SUCCESS;
     }
 
     // Read whole image to process it locally
@@ -1081,7 +1090,7 @@ NTSTATUS MMap::InitializeCookie( ImageContextPtr pImage )
     GetSystemTimeAsFileTime( &systime );
     QueryPerformanceCounter( &PerformanceCount );
 
-    ptr_t cookie = _process.pid() ^ _process.remote().getWorker()->id() ^ reinterpret_cast<uintptr_t>(&cookie);
+    ptr_t cookie = _process.pid() ^ _process.remote().getExecThread()->id() ^ reinterpret_cast<uintptr_t>(&cookie);
 
     if (pImage->ldrEntry.type == mt_mod64)
     {
@@ -1333,7 +1342,7 @@ NTSTATUS MMap::CreateActx( const pe::PEImage& image  )
         (*a)->mov( (*a)->zdx, _pAContext.ptr() );
         (*a)->mov( (*a)->intptr_ptr( (*a)->zdx ), (*a)->zax );
 
-        _process.remote().AddReturnWithEvent( *a );
+        _process.remote().AddReturnWithEvent( *a, image.mType() );
         a->GenEpilogue();
 
         status = _process.remote().ExecInWorkerThread( (*a)->make(), (*a)->getCodeSize(), result );
