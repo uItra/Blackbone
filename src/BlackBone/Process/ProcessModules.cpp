@@ -290,7 +290,7 @@ call_result_t<exportData> ProcessModules::GetExport( const ModuleDataPtr& hMod, 
                 OrdIndex = static_cast<WORD>(pAddressOfOrds[i]);
             }
             else
-                return call_result_t<exportData>( data, STATUS_NOT_FOUND );
+                return STATUS_NOT_FOUND;
 
             if ((reinterpret_cast<uintptr_t>(name_ord) <= 0xFFFF && (WORD)((uintptr_t)name_ord) == (OrdIndex + pExpData->Base)) ||
                  (reinterpret_cast<uintptr_t>(name_ord) > 0xFFFF && strcmp( pName, name_ord ) == 0))
@@ -341,6 +341,17 @@ call_result_t<exportData> ProcessModules::GetExport( const ModuleDataPtr& hMod, 
     }
 
     return STATUS_NOT_FOUND;
+}
+
+/// <summary>
+/// Get export address. Forwarded exports will be automatically resolved if forward module is present
+/// </summary>
+/// <param name="modName">Module name to search in</param>
+/// <param name="name_ord">Function name or ordinal</param>
+/// <returns>Export info. If failed procAddress field is 0</returns>
+call_result_t<exportData> ProcessModules::GetExport( const std::wstring& modName, const char* name_ord )
+{
+    return GetExport( GetModule( modName ), name_ord );
 }
 
 /// <summary>
@@ -452,10 +463,12 @@ call_result_t<ModuleDataPtr> ProcessModules::Inject( const std::wstring& path, T
     a->GenCall( pLdrLoadDll->procAddress, { 0, 0, modName->ptr(), modName->ptr() + 0x800 } );
     (*a)->ret();
 
+    _proc.remote().CreateRPCEnvironment( Worker_None, true );
+
     // Execute call
     if (pThread != nullptr)
     {
-        if(pThread == _proc.remote().getWorker())
+        if (pThread == _proc.remote().getWorker())
             status = _proc.remote().ExecInWorkerThread( (*a)->make(), (*a)->getCodeSize(), res );
         else
             status = _proc.remote().ExecInAnyThread( (*a)->make(), (*a)->getCodeSize(), res, pThread );
