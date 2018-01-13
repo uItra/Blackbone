@@ -4,7 +4,7 @@
 #include "../../Misc/Utils.h"
 #include "../../Misc/DynImport.h"
 #include "../../Misc/trace.hpp"
-#include "../../Misc/PatternLoader.h"
+#include "../../Symbols/SymbolData.h"
 
 #include "../contrib/VersionHelpers.h"
 
@@ -154,7 +154,7 @@ ptr_t NtLdr::SetNode( ptr_t ptr, Module pModule )
 /// <param name="mod">Module data</param>
 /// <param name="tlsPtr">TLS directory of target image</param>
 /// <returns>Status code</returns>
-NTSTATUS NtLdr::AddStaticTLSEntry( const NtLdrEntry& mod, ptr_t tlsPtr )
+NTSTATUS NtLdr::AddStaticTLSEntry( NtLdrEntry& mod, ptr_t tlsPtr )
 {
     bool wxp = IsWindowsXPOrGreater() && !IsWindowsVistaOrGreater();
     ptr_t pNode = _nodeMap.count( mod.baseAddress ) ? _nodeMap[mod.baseAddress] : 0;
@@ -163,17 +163,21 @@ NTSTATUS NtLdr::AddStaticTLSEntry( const NtLdrEntry& mod, ptr_t tlsPtr )
     ptr_t LdrpHandleTlsData = 0;
     if (mod.type == mt_mod64)
     {
-        LdrpHandleTlsData = g_PatternLoader->data().LdrpHandleTlsData64;
+        LdrpHandleTlsData = g_symbols.LdrpHandleTlsData64;
         pNode = SetNode<_LDR_DATA_TABLE_ENTRY_BASE64>( pNode, mod.baseAddress );
     }
     else
     {
-        LdrpHandleTlsData = g_PatternLoader->data().LdrpHandleTlsData32;
+        LdrpHandleTlsData = g_symbols.LdrpHandleTlsData32;
         pNode = SetNode<_LDR_DATA_TABLE_ENTRY_BASE32>( pNode, mod.baseAddress );
     }
 
     if (pNode == 0)
         return STATUS_NO_MEMORY;
+
+    // Update ptr
+    if (mod.ldrPtr == 0)
+        mod.ldrPtr = pNode;
 
     // Manually add TLS table
     if (wxp && tlsPtr != 0)
@@ -231,12 +235,12 @@ NTSTATUS NtLdr::AddStaticTLSEntry( const NtLdrEntry& mod, ptr_t tlsPtr )
 /// <returns>true on success</returns>
 bool NtLdr::InsertInvertedFunctionTable( NtLdrEntry& mod )
 { 
-    ptr_t RtlInsertInvertedFunctionTable = g_PatternLoader->data().RtlInsertInvertedFunctionTable64;
-    ptr_t LdrpInvertedFunctionTable = g_PatternLoader->data().LdrpInvertedFunctionTable64;
+    ptr_t RtlInsertInvertedFunctionTable = g_symbols.RtlInsertInvertedFunctionTable64;
+    ptr_t LdrpInvertedFunctionTable = g_symbols.LdrpInvertedFunctionTable64;
     if (mod.type == mt_mod32)
     {
-        RtlInsertInvertedFunctionTable = g_PatternLoader->data().RtlInsertInvertedFunctionTable32;
-        LdrpInvertedFunctionTable = g_PatternLoader->data().LdrpInvertedFunctionTable32;
+        RtlInsertInvertedFunctionTable = g_symbols.RtlInsertInvertedFunctionTable32;
+        LdrpInvertedFunctionTable = g_symbols.LdrpInvertedFunctionTable32;
     }
 
     // Invalid addresses. Probably pattern scan has failed
@@ -335,6 +339,41 @@ bool NtLdr::InsertInvertedFunctionTable( NtLdrEntry& mod )
         else
             return InsertP( _RTL_INVERTED_FUNCTION_TABLE7<DWORD>() );
     }
+}
+
+/// <summary>
+/// Free static TLS
+/// </summary>
+/// <param name="mod">Target module</param>
+/// <param name="noThread">Don't create new threads during remote call</param>
+/// <returns>Status code</returns>
+NTSTATUS NtLdr::UnloadTLS( const NtLdrEntry& mod, bool noThread /*= false*/ )
+{
+    // No loader entry to free
+    if (mod.ldrPtr == 0)
+        return STATUS_INVALID_ADDRESS;
+
+    ptr_t LdrpReleaseTlsEntry = g_symbols.LdrpReleaseTlsEntry64;
+    if (mod.type == mt_mod32)
+        LdrpReleaseTlsEntry = g_symbols.LdrpReleaseTlsEntry32;
+
+    // Not available
+    if (LdrpReleaseTlsEntry == 0)
+        return STATUS_ORDINAL_NOT_FOUND;
+
+    auto a = AsmFactory::GetAssembler( mod.type );
+    uint64_t result = 0;
+
+    a->GenPrologue();
+    a->GenCall( LdrpReleaseTlsEntry, { mod.ldrPtr, 0 }, cc_fastcall );
+
+    _process.remote().AddReturnWithEvent( *a );
+    a->GenEpilogue();
+
+    _process.remote().CreateRPCEnvironment( noThread ? Worker_UseExisting : Worker_CreateNew, true );
+    _process.remote().ExecInWorkerThread( (*a)->make(), (*a)->getCodeSize(), result );
+
+    return STATUS_SUCCESS;
 }
 
 /// <summary>
