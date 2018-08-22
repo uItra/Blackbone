@@ -7,7 +7,7 @@
 #include "../DriverControl/DriverControl.h"
 
 #include <random>
-#include <VersionHelpers.h>
+#include <3rd_party/VersionApi.h>
 
 #ifndef STATUS_INVALID_EXCEPTION_HANDLER
 #define STATUS_INVALID_EXCEPTION_HANDLER ((NTSTATUS)0xC00001A5L)
@@ -1242,7 +1242,17 @@ NTSTATUS MMap::CreateActx( const pe::PEImage& image  )
     _pAContext = std::move( mem.result() );
     
     bool switchMode = image.mType() == mt_mod64 && _process.core().isWow64();
-    auto pCreateActx = _process.modules().GetExport( _process.modules().GetModule( L"kernel32.dll" ), "CreateActCtxW" );
+    auto kernel32 = _process.modules().GetModule( L"kernel32.dll" );
+    if (!kernel32)
+    {
+        BLACKBONE_TRACE( 
+            L"ManualMap: Failed to get kernel32 base, error 0x%08x. Possibly LDR is not available yet", 
+            LastNtStatus() 
+        );
+        return LastNtStatus();
+    }
+
+    auto pCreateActx = _process.modules().GetExport( kernel32, "CreateActCtxW" );
     if (!pCreateActx)
     {
         BLACKBONE_TRACE( 
